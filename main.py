@@ -1,6 +1,6 @@
 import argparse
 from javascript import require, On, Once, AsyncTask, once, off
-
+from simple_chalk import chalk
 
 parser = argparse.ArgumentParser(description='Run the mineflayer bot with custom arguments.')
 parser.add_argument('--username', type=str, default='Companion', help='Username for the bot')
@@ -91,13 +91,13 @@ def stop_follow(bot):
     global is_following
     is_following = False
     bot.pathfinder.setGoal(None)
-    print("Stopping.")
+    print(chalk.yellow("Stopping."))
     return
 
 def guard_area(bot, pos):
     global guardPos
     guardPos = pos.clone()
-    print("Guarding area at:", guardPos)
+    print(chalk.blue("Guarding area at: " + str(guardPos)))
     if not bot.pvp.target:
         move_to_guard_pos(bot, guardPos)
 
@@ -106,20 +106,20 @@ def stop_guarding(bot):
     guardPos = None
     bot.pvp.stop()
     bot.pathfinder.setGoal(None)
-    print("Stopped guarding.")
+    print(chalk.blue("Stopped guarding."))
 
-def move_to_guard_pos(bot,pos):
+def move_to_guard_pos(bot, pos):
     global guardPos
     if guardPos is None:
         return
     else:
-        print("Moving to guard position:", guardPos)
+        print(chalk.cyan("Moving to guard position: " + str(guardPos)))
         bot.pathfinder.setGoal(
             mineflayer_pathfinder.pathfinder.goals.GoalNear(
                 pos["x"], pos["y"], pos["z"], 1
             )
         )
-    print("Moving to guard position:", guardPos)
+    print(chalk.cyan("Moving to guard position: " + str(guardPos)))
 
 def compute_distance(a, b):
     dx = a.x - b.x
@@ -140,7 +140,8 @@ def start_bot():
         @On(bot, "login")
         def login(this):
             bot_socket = bot._client.socket
-            print(f"Logged in to {bot_socket.server if bot_socket.server else bot_socket._host }")
+            server = bot_socket.server if bot_socket.server else bot_socket._host
+            print(chalk.green(f"Logged in to {server}"))
 
         @On(bot, "playercollect")
         def playercollect(collector, itemDrop):
@@ -161,7 +162,7 @@ def start_bot():
             if guardPos is None:
                 if looking is True:
                     other_entity = bot.nearestEntity()
-                    bot.lookAt(vec3(other_entity.position.x, other_entity.position.y + other_entity.height,other_entity.position.z))
+                    bot.lookAt(vec3(other_entity.position.x, other_entity.position.y + other_entity.height, other_entity.position.z))
                 return
             entity = bot.nearestEntity()
             if entity.kind == "Hostile mobs":
@@ -181,7 +182,7 @@ def start_bot():
         def messagestr(this, message, messagePosition, jsonMsg, sender, verified=None):
 
             if messagePosition == "chat":
-                if "quit" in message:
+                if "w" in message:
                     bot.chat("Goodbye!")
                     bot.reconnect = False
                     this.quit()
@@ -206,7 +207,7 @@ def start_bot():
                             pathfind_to_goal(bot, player_location)
 
                 if "follow me" in message:
-                    print("following player")
+                    print(chalk.cyan("Following player"))
                     local_players = bot.players
                     target_player = None
                     for el in local_players:
@@ -221,10 +222,10 @@ def start_bot():
                             bot.chat("You are too far away! I can't see you.")
                             return
                         else:
-                            print(f"Now following {target_player.username}")
+                            print(chalk.cyan(f"Now following {target_player.username}"))
                             pathfind_to_goalfollow(bot, target_player.entity)
                     else:
-                        print(f"Player with UUID {sender} not found.")
+                        print(chalk.cyan(f"Player with UUID {sender} not found."))
 
                 if "fight me" in message:
                     local_players = bot.players
@@ -267,20 +268,19 @@ def start_bot():
                         stop_follow(bot)
                         bot.pvp.stop()
 
-
         @On(bot, "kicked")
         def kicked(this, reason, loggedIn):
             if loggedIn:
-                print(f"Kicked whilst trying to connect: {reason}")
+                print(chalk.red(f"Kicked whilst trying to connect: {reason}"))
 
         @On(bot, "end")
         def end(this, reason):
-            print(f"Disconnected: {reason}")
+            print(chalk.red(f"Disconnected: {reason}"))
             off(bot, "login", login)
             off(bot, "kicked", kicked)
             off(bot, "messagestr", messagestr)
             if reconnect:
-                print("RESTARTING BOT")
+                print(chalk.magenta("RESTARTING BOT"))
                 start_bot()
             off(bot, "end", end)
 
