@@ -1,4 +1,23 @@
+import argparse
 from javascript import require, On, Once, AsyncTask, once, off
+
+
+parser = argparse.ArgumentParser(description='Run the mineflayer bot with custom arguments.')
+parser.add_argument('--username', type=str, default='Companion', help='Username for the bot')
+parser.add_argument('--host', type=str, default='localhost', help='Server host')
+parser.add_argument('--port', type=int, default=25565, help='Server port')
+parser.add_argument('--version', type=str, default='1.21.1', help='Minecraft version')
+# Use action='store_true' so --hideErrors sets the flag to True; if omitted, it stays False.
+parser.add_argument('--hideErrors', action='store_true', help='Hide errors flag')
+args = parser.parse_args()
+
+bot_args = {
+    "username": args.username,
+    "host": args.host,
+    "port": args.port,
+    "version": args.version,
+    "hideErrors": args.hideErrors,
+}
 
 # javascript libraries
 mineflayer = require("mineflayer")
@@ -7,23 +26,11 @@ pvp = require("mineflayer-pvp").plugin
 vec3 = require("vec3")
 armorManager = require("mineflayer-armor-manager")
 
-bot_args = {
-    "username": "test-bot",
-    "host": "localhost",
-    "port": 25565,
-    "version": "1.21.1",
-    "hideErrors": False,
-}
-
 # Global Flags
 reconnect = True
 is_following = False
 guardPos = None
 looking = True
-
-def looking():
-    global looking
-    looking = False
 
 def lookingTrue():
     global looking
@@ -137,7 +144,6 @@ def start_bot():
 
         @On(bot, "playercollect")
         def playercollect(collector, itemDrop):
-            # Only process if the bot is the collector
             if collector != bot.entity:
                 return
             AsyncTask(bot, 150, lambda: equip_sword(bot))
@@ -159,7 +165,7 @@ def start_bot():
                 return
             entity = bot.nearestEntity()
             if entity.kind == "Hostile mobs":
-                if compute_distance(entity.position, bot.entity.position) < 8:
+                if compute_distance(entity.position, bot.entity.position) < 16:
                     equip_sword(bot)
                     bot.pvp.attack(entity)
                 else:
