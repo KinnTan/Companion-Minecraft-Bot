@@ -44,14 +44,15 @@ def pathfind_to_goal(bot, goal_location):
             goal_location["x"], goal_location["y"], goal_location["z"], 1
         )
     )
+    bot.chat("Navigating to your location. Please wait...")
 
 def pathfind_to_goalfollow(bot, target_player):
-    global is_following
-    global looking
+    global is_following, looking
     looking = False
     is_following = True
     bot.pathfinder.setGoal(
         mineflayer_pathfinder.pathfinder.goals.GoalFollow(target_player, 1), True)
+    bot.chat("I'm now following you. Stay close!")
 
 def best_sword(bot):
     # Filter for all swords in the inventory
@@ -91,13 +92,15 @@ def stop_follow(bot):
     global is_following
     is_following = False
     bot.pathfinder.setGoal(None)
-    print(chalk.yellow("Stopping."))
+    print(chalk.yellow("Stopping current follow action."))
+    bot.chat("Stopping follow mode. Standing by.")
     return
 
 def guard_area(bot, pos):
     global guardPos
     guardPos = pos.clone()
     print(chalk.blue("Guarding area at: " + str(guardPos)))
+    bot.chat("Guarding your location at " + str(guardPos) + ". I will stay alert.")
     if not bot.pvp.target:
         move_to_guard_pos(bot, guardPos)
 
@@ -107,6 +110,7 @@ def stop_guarding(bot):
     bot.pvp.stop()
     bot.pathfinder.setGoal(None)
     print(chalk.blue("Stopped guarding."))
+    bot.chat("I will no longer guard this area.")
 
 def move_to_guard_pos(bot, pos):
     global guardPos
@@ -120,6 +124,7 @@ def move_to_guard_pos(bot, pos):
             )
         )
     print(chalk.cyan("Moving to guard position: " + str(guardPos)))
+    bot.chat("Moving to guard position at " + str(guardPos) + ".")
 
 def compute_distance(a, b):
     dx = a.x - b.x
@@ -142,6 +147,7 @@ def start_bot():
             bot_socket = bot._client.socket
             server = bot_socket.server if bot_socket.server else bot_socket._host
             print(chalk.green(f"Logged in to {server}"))
+            bot.chat("Hello! I'm online and ready to assist you.")
 
         @On(bot, "playercollect")
         def playercollect(collector, itemDrop):
@@ -176,38 +182,37 @@ def start_bot():
         def on_goal_reached(this, goal):
             global looking
             looking = True
-            bot.chat("I have arrived at your location!")
+            bot.chat("I have arrived at your destination!")
 
         @On(bot, "messagestr")
         def messagestr(this, message, messagePosition, jsonMsg, sender, verified=None):
-
             if messagePosition == "chat":
-                if "w" in message:
-                    bot.chat("Goodbye!")
+                if "quit" in message:
+                    bot.chat("Goodbye! Shutting down now.")
                     bot.reconnect = False
                     this.quit()
 
-                if "come here" in message:
+                elif "come here" in message:
                     if is_following:
-                        bot.chat("Currently Following You")
+                        bot.chat("I'm already following you!")
                     else:
                         local_players = bot.players
+                        player_location = None
                         for el in local_players:
                             player_data = local_players[el]
                             if player_data["uuid"] == sender:
                                 if not player_data.entity:
-                                    bot.chat("You are too far away! I can't see you.")
+                                    bot.chat("You seem to be too far away for me to see.")
                                     return
                                 vec3_temp = player_data.entity.position
-                                player_location = vec3(
-                                    vec3_temp["x"], vec3_temp["y"], vec3_temp["z"]
-                                )
+                                player_location = vec3(vec3_temp["x"], vec3_temp["y"], vec3_temp["z"])
                                 break
                         if player_location:
+                            bot.chat("Got it! I'm on my way to you.")
                             pathfind_to_goal(bot, player_location)
 
-                if "follow me" in message:
-                    print(chalk.cyan("Following player"))
+                elif "follow me" in message:
+                    print(chalk.cyan("Processing follow command..."))
                     local_players = bot.players
                     target_player = None
                     for el in local_players:
@@ -219,52 +224,54 @@ def start_bot():
                             break
                     if target_player:
                         if not target_player.entity:
-                            bot.chat("You are too far away! I can't see you.")
+                            bot.chat("I can't see you—please come closer.")
                             return
                         else:
-                            print(chalk.cyan(f"Now following {target_player.username}"))
+                            bot.chat("Following you now. Let’s stick together!")
                             pathfind_to_goalfollow(bot, target_player.entity)
                     else:
-                        print(chalk.cyan(f"Player with UUID {sender} not found."))
+                        bot.chat("I couldn't locate you. Please try again.")
 
-                if "fight me" in message:
+                elif "fight me" in message:
                     local_players = bot.players
                     target_entity = None
                     for el in local_players:
                         player_data = local_players[el]
                         if player_data["uuid"] == sender:
                             if not player_data.entity:
-                                bot.chat("You're too far away!")
+                                bot.chat("You seem too far away to fight.")
                                 return
                             target_entity = player_data.entity
                             break
                     if target_entity:
                         global looking
                         looking = False
-                        bot.chat("Prepare to fight!")
+                        bot.chat("Engaging combat mode! Prepare yourself!")
                         bot.pvp.attack(target_entity)
                         equip_sword(bot)
 
-                if "guard here" in message:
+                elif "guard here" in message:
                     local_players = bot.players
+                    player_location = None
                     for el in local_players:
                         player_data = local_players[el]
                         if player_data["uuid"] == sender:
                             if not player_data.entity:
-                                bot.chat("You're too far away!")
+                                bot.chat("I can't see you well enough to guard here.")
                                 return
                             pos = player_data.entity.position
                             player_location = vec3(pos.x, pos.y, pos.z)
-                    bot.chat("I will guard that location.")
-                    guard_area(bot, player_location)
+                    if player_location:
+                        bot.chat("Understood. I will guard this area at " + str(player_location) + ".")
+                        guard_area(bot, player_location)
 
-                if "stop" in message:
+                elif "stop" in message:
                     if guardPos is not None:
-                        bot.chat("I will no longer guard this area.")
+                        bot.chat("Alright, stopping guard mode.")
                         stop_guarding(bot)
                     else:
                         lookingTrue()
-                        bot.chat("Stopping current actions.")
+                        bot.chat("Okay, halting all current actions.")
                         stop_follow(bot)
                         bot.pvp.stop()
 
@@ -272,10 +279,12 @@ def start_bot():
         def kicked(this, reason, loggedIn):
             if loggedIn:
                 print(chalk.red(f"Kicked whilst trying to connect: {reason}"))
+                bot.chat("I've been kicked from the server!")
 
         @On(bot, "end")
         def end(this, reason):
             print(chalk.red(f"Disconnected: {reason}"))
+            bot.chat("Disconnected from the server. Attempting to restart...")
             off(bot, "login", login)
             off(bot, "kicked", kicked)
             off(bot, "messagestr", messagestr)
