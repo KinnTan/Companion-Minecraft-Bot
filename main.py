@@ -3,45 +3,82 @@ from javascript import require, On, Once, AsyncTask, once, off
 # javascript libraries
 mineflayer = require("mineflayer")
 mineflayer_pathfinder = require("mineflayer-pathfinder")
-pvp = require('mineflayer-pvp').plugin
-armorManager = require("mineflayer-armor-manager")
+pvp = require("mineflayer-pvp").plugin
 vec3 = require("vec3")
+armorManager = require("mineflayer-armor-manager")
 
-bot_args = {"username": "test-bot", "host": "localhost", "port": 25565, "version": "1.21.1", "hideErrors": False}
+bot_args = {
+    "username": "test-bot",
+    "host": "localhost",
+    "port": 25565,
+    "version": "1.21.1",
+    "hideErrors": False,
+}
 
-#global
+# Global Flags
 reconnect = True
 is_following = False
+guardPos = None
+looking = True
+
+def looking():
+    global looking
+    looking = False
+
+def lookingTrue():
+    global looking
+    looking = True
 
 def pathfind_to_goal(bot, goal_location):
+    global looking
+    looking = False
     bot.pathfinder.setGoal(
         mineflayer_pathfinder.pathfinder.goals.GoalNear(
             goal_location["x"], goal_location["y"], goal_location["z"], 1
         )
     )
 
-
 def pathfind_to_goalfollow(bot, target_player):
     global is_following
+    global looking
+    looking = False
     is_following = True
     bot.pathfinder.setGoal(
-        mineflayer_pathfinder.pathfinder.goals.GoalFollow(target_player, 1), True
-    )
+        mineflayer_pathfinder.pathfinder.goals.GoalFollow(target_player, 1), True)
 
-def lookatplayer(bot, sender):
-    for look in bot.players:
-        player_data = bot.players[look]
-        if player_data["uuid"] == sender:
-            if not player_data.entity:
-                return
-            vec3_temp = player_data.entity.position
-            player_location = vec3(
-                vec3_temp["x"], vec3_temp["y"] + 1, vec3_temp["z"]
-            )
+def best_sword(bot):
+    # Filter for all swords in the inventory
+    swords = [item for item in bot.inventory.items() if "sword" in item.name]
+    if not swords:
+        return None
+    # Define a ranking for sword types
+    ranking = {
+        "netherite_sword": 5,
+        "diamond_sword": 4,
+        "iron_sword": 3,
+        "stone_sword": 2,
+        "wooden_sword": 1,
+    }
+    # Calculate a value for each sword based on its name
+    def sword_value(item):
+        for sword_type, value in ranking.items():
+            if sword_type in item.name:
+                return value
+        return 0
 
-        if player_location:
-            bot.lookAt(player_location)
-        break
+    best = max(swords, key=lambda item: sword_value(item))
+    return best
+
+def equip_sword(bot):
+    sword = best_sword(bot)
+    if sword:
+        bot.equip(sword, "hand")
+
+def equip_shield(bot):
+    for item in bot.inventory.items():
+        if "shield" in item.name:
+            bot.equip(item, "off-hand")
+            break
 
 def stop_follow(bot):
     global is_following
@@ -50,111 +87,195 @@ def stop_follow(bot):
     print("Stopping.")
     return
 
+def guard_area(bot, pos):
+    global guardPos
+    guardPos = pos.clone()
+    print("Guarding area at:", guardPos)
+    if not bot.pvp.target:
+        move_to_guard_pos(bot, guardPos)
+
+def stop_guarding(bot):
+    global guardPos
+    guardPos = None
+    bot.pvp.stop()
+    bot.pathfinder.setGoal(None)
+    print("Stopped guarding.")
+
+def move_to_guard_pos(bot,pos):
+    global guardPos
+    if guardPos is None:
+        return
+    else:
+        print("Moving to guard position:", guardPos)
+        bot.pathfinder.setGoal(
+            mineflayer_pathfinder.pathfinder.goals.GoalNear(
+                pos["x"], pos["y"], pos["z"], 1
+            )
+        )
+    print("Moving to guard position:", guardPos)
+
+def compute_distance(a, b):
+    dx = a.x - b.x
+    dy = a.y - b.y
+    dz = a.z - b.z
+    return (dx*dx + dy*dy + dz*dz) ** 0.5
+
 def start_bot():
     bot = mineflayer.createBot(bot_args)
-    #load plugins
+    # Load Plugins
     bot.loadPlugin(mineflayer_pathfinder.pathfinder)
     bot.loadPlugin(pvp)
     bot.loadPlugin(armorManager)
 
-    @On(bot, "login")
-    def login(this):
-        bot_socket = bot._client.socket
-        print(
-            f"Logged in to {bot_socket.server if bot_socket.server else bot_socket._host }"
-        )
+    @On(bot, "spawn")
+    def on_spawn(this):
 
+        @On(bot, "login")
+        def login(this):
+            bot_socket = bot._client.socket
+            print(f"Logged in to {bot_socket.server if bot_socket.server else bot_socket._host }")
 
-    @On(bot, "kicked")
-    def kicked(this, reason, loggedIn):
-        if loggedIn:
-            print(f"Kicked whilst trying to connect: {reason}")
+        @On(bot, "playercollect")
+        def playercollect(collector, itemDrop):
+            # Only process if the bot is the collector
+            if collector != bot.entity:
+                return
+            AsyncTask(bot, 150, lambda: equip_sword(bot))
+            AsyncTask(bot, 250, lambda: equip_shield(bot))
+            AsyncTask(bot, 350, lambda: bot.armorManager.equipAll())
 
-    @On(bot, "messagestr")
-    def messagestr(this, message, messagePosition, jsonMsg, sender, verified=None):
+        @On(bot, "stoppedAttacking")
+        def stopped_attacking(this):
+            if guardPos is not None:
+                move_to_guard_pos(bot, guardPos)
 
-        if messagePosition == "chat":
-            if "quit" in message:
-                bot.chat("Goodbye!")
-                bot.reconnect = False
-                this.quit()
-
-            if "look at me" in message:
-                lookatplayer(bot, sender)
-
-            if "come here" in message:
-                if is_following:
-                    bot.chat("Currently Following You")
+        @On(bot, "physicsTick")
+        def guard_tick(this):
+            global guardPos
+            if guardPos is None:
+                if looking is True:
+                    other_entity = bot.nearestEntity()
+                    bot.lookAt(vec3(other_entity.position.x, other_entity.position.y + other_entity.height,other_entity.position.z))
+                return
+            entity = bot.nearestEntity()
+            if entity.kind == "Hostile mobs":
+                if compute_distance(entity.position, bot.entity.position) < 8:
+                    equip_sword(bot)
+                    bot.pvp.attack(entity)
                 else:
-                    # Find all nearby players
-                    local_players = bot.players
+                    return
 
-                    # Search for our specific player
+        @On(bot, "goal_reached")
+        def on_goal_reached(this, goal):
+            global looking
+            looking = True
+            bot.chat("I have arrived at your location!")
+
+        @On(bot, "messagestr")
+        def messagestr(this, message, messagePosition, jsonMsg, sender, verified=None):
+
+            if messagePosition == "chat":
+                if "quit" in message:
+                    bot.chat("Goodbye!")
+                    bot.reconnect = False
+                    this.quit()
+
+                if "come here" in message:
+                    if is_following:
+                        bot.chat("Currently Following You")
+                    else:
+                        local_players = bot.players
+                        for el in local_players:
+                            player_data = local_players[el]
+                            if player_data["uuid"] == sender:
+                                if not player_data.entity:
+                                    bot.chat("You are too far away! I can't see you.")
+                                    return
+                                vec3_temp = player_data.entity.position
+                                player_location = vec3(
+                                    vec3_temp["x"], vec3_temp["y"], vec3_temp["z"]
+                                )
+                                break
+                        if player_location:
+                            pathfind_to_goal(bot, player_location)
+
+                if "follow me" in message:
+                    print("following player")
+                    local_players = bot.players
+                    target_player = None
+                    for el in local_players:
+                        player_data = local_players[el]
+                        if player_data["uuid"] == sender:
+                            target_username = player_data["username"]
+                            if target_username in bot.players:
+                                target_player = bot.players[target_username]
+                            break
+                    if target_player:
+                        if not target_player.entity:
+                            bot.chat("You are too far away! I can't see you.")
+                            return
+                        else:
+                            print(f"Now following {target_player.username}")
+                            pathfind_to_goalfollow(bot, target_player.entity)
+                    else:
+                        print(f"Player with UUID {sender} not found.")
+
+                if "fight me" in message:
+                    local_players = bot.players
+                    target_entity = None
                     for el in local_players:
                         player_data = local_players[el]
                         if player_data["uuid"] == sender:
                             if not player_data.entity:
-                                bot.chat("You are too far away! I can't see you.")
+                                bot.chat("You're too far away!")
                                 return
-                            vec3_temp = player_data.entity.position
-                            player_location = vec3(
-                                vec3_temp["x"], vec3_temp["y"], vec3_temp["z"]
-                            )
+                            target_entity = player_data.entity
                             break
-                    if player_location:
-                        pathfind_to_goal(bot, player_location)
+                    if target_entity:
+                        global looking
+                        looking = False
+                        bot.chat("Prepare to fight!")
+                        bot.pvp.attack(target_entity)
+                        equip_sword(bot)
 
-            if "stop" in message:
-                bot.chat("Stopping...")
-                stop_follow(bot)
-                bot.pvp.stop()
-                return
+                if "guard here" in message:
+                    local_players = bot.players
+                    for el in local_players:
+                        player_data = local_players[el]
+                        if player_data["uuid"] == sender:
+                            if not player_data.entity:
+                                bot.chat("You're too far away!")
+                                return
+                            pos = player_data.entity.position
+                            player_location = vec3(pos.x, pos.y, pos.z)
+                    bot.chat("I will guard that location.")
+                    guard_area(bot, player_location)
 
-            if "follow me" in message:
-                print("following player")
-                local_players = bot.players
-                target_player = None
-                for el in local_players:
-                    player_data = local_players[el]
-                    if player_data["uuid"] == sender:
-                        target_username = player_data["username"]
-                        if target_username in bot.players:
-                            target_player = bot.players[target_username]
-                        break
-                if target_player:
-                    if not target_player.entity:
-                        bot.chat("You are too far away! I can't see you.")
-                        return
+                if "stop" in message:
+                    if guardPos is not None:
+                        bot.chat("I will no longer guard this area.")
+                        stop_guarding(bot)
                     else:
-                        print(f"Now following {target_player.username}")
-                        pathfind_to_goalfollow(bot, target_player.entity)
-                else:
-                    print(f"Player with UUID {sender} not found.")
+                        lookingTrue()
+                        bot.chat("Stopping current actions.")
+                        stop_follow(bot)
+                        bot.pvp.stop()
 
-            if "fight me" in message:
-                local_players = bot.players
-                target_entity = None
-                for el in local_players:
-                    player_data = local_players[el]
-                    if player_data["uuid"] == sender:
-                        if not player_data.entity:
-                            bot.chat("You're too far away!")
-                            return
-                        target_entity = player_data.entity
-                        break
-                if target_entity:
-                    bot.chat("Prepare to fight!")
-                    bot.pvp.attack(target_entity)
 
-    @On(bot, "end")
-    def end(this, reason):
-        print(f"Disconnected: {reason}")
-        off(bot, "login", login)
-        off(bot, "kicked", kicked)
-        off(bot, "messagestr", messagestr)
-        if reconnect:
-            print("RESTARTING BOT")
-            start_bot()
-        off(bot, "end", end)
+        @On(bot, "kicked")
+        def kicked(this, reason, loggedIn):
+            if loggedIn:
+                print(f"Kicked whilst trying to connect: {reason}")
+
+        @On(bot, "end")
+        def end(this, reason):
+            print(f"Disconnected: {reason}")
+            off(bot, "login", login)
+            off(bot, "kicked", kicked)
+            off(bot, "messagestr", messagestr)
+            if reconnect:
+                print("RESTARTING BOT")
+                start_bot()
+            off(bot, "end", end)
 
 start_bot()
