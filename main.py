@@ -29,12 +29,16 @@ armorManager = require("mineflayer-armor-manager")
 # Global Flags
 reconnect = True
 is_following = False
+is_follow_protect = False
+followTarget = None
 guardPos = None
 looking = True
+
 
 def lookingTrue():
     global looking
     looking = True
+
 
 def pathfind_to_goal(bot, goal_location):
     global looking
@@ -46,6 +50,7 @@ def pathfind_to_goal(bot, goal_location):
     )
     bot.chat("Navigating to your location. Please wait...")
 
+
 def pathfind_to_goalfollow(bot, target_player):
     global is_following, looking
     looking = False
@@ -54,12 +59,11 @@ def pathfind_to_goalfollow(bot, target_player):
         mineflayer_pathfinder.pathfinder.goals.GoalFollow(target_player, 1), True)
     bot.chat("I'm now following you. Stay close!")
 
+
 def best_sword(bot):
-    # Filter for all swords in the inventory
     swords = [item for item in bot.inventory.items() if "sword" in item.name]
     if not swords:
         return None
-    # Define a ranking for sword types
     ranking = {
         "netherite_sword": 5,
         "diamond_sword": 4,
@@ -67,7 +71,7 @@ def best_sword(bot):
         "stone_sword": 2,
         "wooden_sword": 1,
     }
-    # Calculate a value for each sword based on its name
+
     def sword_value(item):
         for sword_type, value in ranking.items():
             if sword_type in item.name:
@@ -77,10 +81,12 @@ def best_sword(bot):
     best = max(swords, key=lambda item: sword_value(item))
     return best
 
+
 def equip_sword(bot):
     sword = best_sword(bot)
     if sword:
         bot.equip(sword, "hand")
+
 
 def equip_shield(bot):
     for item in bot.inventory.items():
@@ -88,21 +94,26 @@ def equip_shield(bot):
             bot.equip(item, "off-hand")
             break
 
+
 def stop_follow(bot):
-    global is_following
+    global is_following, is_follow_protect, followTarget
     is_following = False
+    is_follow_protect = False
+    followTarget = None
     bot.pathfinder.setGoal(None)
     print(chalk.yellow("Stopping current follow action."))
     bot.chat("Stopping follow mode. Standing by.")
     return
 
+
 def guard_area(bot, pos):
     global guardPos
     guardPos = pos.clone()
     print(chalk.blue("Guarding area at: " + str(guardPos)))
-    bot.chat("Guarding your location at " + str(guardPos) + ". I will stay alert.")
+    bot.chat("Guarding this location")
     if not bot.pvp.target:
         move_to_guard_pos(bot, guardPos)
+
 
 def stop_guarding(bot):
     global guardPos
@@ -111,6 +122,7 @@ def stop_guarding(bot):
     bot.pathfinder.setGoal(None)
     print(chalk.blue("Stopped guarding."))
     bot.chat("I will no longer guard this area.")
+
 
 def move_to_guard_pos(bot, pos):
     global guardPos
@@ -124,17 +136,17 @@ def move_to_guard_pos(bot, pos):
             )
         )
     print(chalk.cyan("Moving to guard position: " + str(guardPos)))
-    bot.chat("Moving to guard position at " + str(guardPos) + ".")
+
 
 def compute_distance(a, b):
     dx = a.x - b.x
     dy = a.y - b.y
     dz = a.z - b.z
-    return (dx*dx + dy*dy + dz*dz) ** 0.5
+    return (dx * dx + dy * dy + dz * dz) ** 0.5
+
 
 def start_bot():
     bot = mineflayer.createBot(bot_args)
-    # Load Plugins
     bot.loadPlugin(mineflayer_pathfinder.pathfinder)
     bot.loadPlugin(pvp)
     bot.loadPlugin(armorManager)
@@ -161,22 +173,25 @@ def start_bot():
         def stopped_attacking(this):
             if guardPos is not None:
                 move_to_guard_pos(bot, guardPos)
+            elif is_follow_protect and followTarget is not None:
+                print(chalk.cyan(print("Resuming follow mode after combat.")))
+                pathfind_to_goalfollow(bot, followTarget)
 
         @On(bot, "physicsTick")
-        def guard_tick(this):
-            global guardPos
-            if guardPos is None:
+        def tick(this):
+            global guardPos, is_follow_protect, looking
+            if guardPos is None and not is_follow_protect:
                 if looking is True:
                     other_entity = bot.nearestEntity()
-                    bot.lookAt(vec3(other_entity.position.x, other_entity.position.y + other_entity.height, other_entity.position.z))
+                    if other_entity:
+                        bot.lookAt(vec3(other_entity.position.x, other_entity.position.y + other_entity.height,
+                                        other_entity.position.z))
                 return
             entity = bot.nearestEntity()
-            if entity.kind == "Hostile mobs":
+            if entity and entity.kind == "Hostile mobs":
                 if compute_distance(entity.position, bot.entity.position) < 16:
                     equip_sword(bot)
                     bot.pvp.attack(entity)
-                else:
-                    return
 
         @On(bot, "goal_reached")
         def on_goal_reached(this, goal):
@@ -212,7 +227,7 @@ def start_bot():
                             pathfind_to_goal(bot, player_location)
 
                 elif "follow me" in message:
-                    print(chalk.cyan("Processing follow command..."))
+
                     local_players = bot.players
                     target_player = None
                     for el in local_players:
@@ -224,10 +239,37 @@ def start_bot():
                             break
                     if target_player:
                         if not target_player.entity:
-                            bot.chat("I can't see you—please come closer.")
+                            bot.chat("I can't see you please come closer.")
                             return
                         else:
+                            print(chalk.cyan(print(f"Now following")))
                             bot.chat("Following you now. Let’s stick together!")
+                            pathfind_to_goalfollow(bot, target_player.entity)
+                    else:
+                        bot.chat("I couldn't locate you. Please try again.")
+
+                elif "protect me" in message:
+
+                    local_players = bot.players
+                    target_player = None
+                    for el in local_players:
+                        player_data = local_players[el]
+                        if player_data["uuid"] == sender:
+                            target_username = player_data["username"]
+                            if target_username in bot.players:
+                                target_player = bot.players[target_username]
+                            break
+                    if target_player:
+                        if not target_player.entity:
+                            bot.chat("I can't see you please come closer.")
+                            return
+                        else:
+                            bot.chat(
+                                "Following you and protecting you now. I will fight off any hostile mobs that come close!")
+                            global is_follow_protect, followTarget
+                            is_follow_protect = True
+                            followTarget = target_player.entity
+                            print(chalk.cyan(print(f"Now following and Protecting")))
                             pathfind_to_goalfollow(bot, target_player.entity)
                     else:
                         bot.chat("I couldn't locate you. Please try again.")
@@ -292,5 +334,6 @@ def start_bot():
                 print(chalk.magenta("RESTARTING BOT"))
                 start_bot()
             off(bot, "end", end)
+
 
 start_bot()
